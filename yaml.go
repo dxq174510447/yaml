@@ -101,7 +101,7 @@ type Decoder struct {
 // data from r beyond the YAML values requested.
 func NewDecoder(r io.Reader) *Decoder {
 	return &Decoder{
-		parser: newParserFromReader(r),
+		parser: NewParserFromReader(r),
 	}
 }
 
@@ -137,7 +137,7 @@ func (dec *Decoder) Decode(v interface{}) (err error) {
 func unmarshal(in []byte, out interface{}, strict bool) (err error) {
 	defer handleErr(&err)
 	d := newDecoder(strict)
-	p := newParser(in)
+	p := NewParser(in)
 	defer p.destroy()
 	node := p.parse()
 	if node != nil {
