@@ -19,16 +19,32 @@ const (
 	aliasNode
 )
 
-type node struct {
+type Node struct {
 	kind         int
 	line, column int
 	tag          string
 	// For an alias node, alias holds the resolved alias.
-	alias    *node
+	alias    *Node
 	value    string
 	implicit bool
-	children []*node
-	anchors  map[string]*node
+	children []*Node
+	anchors  map[string]*Node
+}
+
+func (n *Node) GetKind() int {
+	return n.kind
+}
+func (n *Node) GetTag() string {
+	return n.tag
+}
+func (n *Node) GetValue() string {
+	return n.value
+}
+func (n *Node) GetChildren() []*Node {
+	return n.children
+}
+func (n *Node) GetAnchors() map[string]*Node {
+	return n.anchors
 }
 
 // ----------------------------------------------------------------------------
@@ -37,11 +53,11 @@ type node struct {
 type parser struct {
 	parser   yaml_parser_t
 	event    yaml_event_t
-	doc      *node
+	doc      *Node
 	doneInit bool
 }
 
-func newParser(b []byte) *parser {
+func NewParser(b []byte) *parser {
 	p := parser{}
 	if !yaml_parser_initialize(&p.parser) {
 		panic("failed to initialize YAML emitter")
@@ -53,7 +69,7 @@ func newParser(b []byte) *parser {
 	return &p
 }
 
-func newParserFromReader(r io.Reader) *parser {
+func NewParserFromReader(r io.Reader) *parser {
 	p := parser{}
 	if !yaml_parser_initialize(&p.parser) {
 		panic("failed to initialize YAML emitter")
@@ -132,13 +148,13 @@ func (p *parser) fail() {
 	failf("%s%s", where, msg)
 }
 
-func (p *parser) anchor(n *node, anchor []byte) {
+func (p *parser) anchor(n *Node, anchor []byte) {
 	if anchor != nil {
 		p.doc.anchors[string(anchor)] = n
 	}
 }
 
-func (p *parser) parse() *node {
+func (p *parser) parse() *Node {
 	p.init()
 	switch p.peek() {
 	case yaml_SCALAR_EVENT:
@@ -159,17 +175,17 @@ func (p *parser) parse() *node {
 	}
 }
 
-func (p *parser) node(kind int) *node {
-	return &node{
+func (p *parser) node(kind int) *Node {
+	return &Node{
 		kind:   kind,
 		line:   p.event.start_mark.line,
 		column: p.event.start_mark.column,
 	}
 }
 
-func (p *parser) document() *node {
+func (p *parser) document() *Node {
 	n := p.node(documentNode)
-	n.anchors = make(map[string]*node)
+	n.anchors = make(map[string]*Node)
 	p.doc = n
 	p.expect(yaml_DOCUMENT_START_EVENT)
 	n.children = append(n.children, p.parse())
@@ -177,7 +193,7 @@ func (p *parser) document() *node {
 	return n
 }
 
-func (p *parser) alias() *node {
+func (p *parser) alias() *Node {
 	n := p.node(aliasNode)
 	n.value = string(p.event.anchor)
 	n.alias = p.doc.anchors[n.value]
@@ -188,7 +204,7 @@ func (p *parser) alias() *node {
 	return n
 }
 
-func (p *parser) scalar() *node {
+func (p *parser) scalar() *Node {
 	n := p.node(scalarNode)
 	n.value = string(p.event.value)
 	n.tag = string(p.event.tag)
@@ -198,7 +214,7 @@ func (p *parser) scalar() *node {
 	return n
 }
 
-func (p *parser) sequence() *node {
+func (p *parser) sequence() *Node {
 	n := p.node(sequenceNode)
 	p.anchor(n, p.event.anchor)
 	p.expect(yaml_SEQUENCE_START_EVENT)
@@ -209,7 +225,7 @@ func (p *parser) sequence() *node {
 	return n
 }
 
-func (p *parser) mapping() *node {
+func (p *parser) mapping() *Node {
 	n := p.node(mappingNode)
 	p.anchor(n, p.event.anchor)
 	p.expect(yaml_MAPPING_START_EVENT)
@@ -224,8 +240,8 @@ func (p *parser) mapping() *node {
 // Decoder, unmarshals a node into a provided value.
 
 type decoder struct {
-	doc     *node
-	aliases map[*node]bool
+	doc     *Node
+	aliases map[*Node]bool
 	mapType reflect.Type
 	terrors []string
 	strict  bool
@@ -246,11 +262,11 @@ var (
 
 func newDecoder(strict bool) *decoder {
 	d := &decoder{mapType: defaultMapType, strict: strict}
-	d.aliases = make(map[*node]bool)
+	d.aliases = make(map[*Node]bool)
 	return d
 }
 
-func (d *decoder) terror(n *node, tag string, out reflect.Value) {
+func (d *decoder) terror(n *Node, tag string, out reflect.Value) {
 	if n.tag != "" {
 		tag = n.tag
 	}
@@ -265,7 +281,7 @@ func (d *decoder) terror(n *node, tag string, out reflect.Value) {
 	d.terrors = append(d.terrors, fmt.Sprintf("line %d: cannot unmarshal %s%s into %s", n.line+1, shortTag(tag), value, out.Type()))
 }
 
-func (d *decoder) callUnmarshaler(n *node, u Unmarshaler) (good bool) {
+func (d *decoder) callUnmarshaler(n *Node, u Unmarshaler) (good bool) {
 	terrlen := len(d.terrors)
 	err := u.UnmarshalYAML(func(v interface{}) (err error) {
 		defer handleErr(&err)
@@ -294,7 +310,7 @@ func (d *decoder) callUnmarshaler(n *node, u Unmarshaler) (good bool) {
 // its types unmarshalled appropriately.
 //
 // If n holds a null value, prepare returns before doing anything.
-func (d *decoder) prepare(n *node, out reflect.Value) (newout reflect.Value, unmarshaled, good bool) {
+func (d *decoder) prepare(n *Node, out reflect.Value) (newout reflect.Value, unmarshaled, good bool) {
 	if n.tag == yaml_NULL_TAG || n.kind == scalarNode && n.tag == "" && (n.value == "null" || n.value == "~" || n.value == "" && n.implicit) {
 		return out, false, false
 	}
@@ -347,7 +363,7 @@ func allowedAliasRatio(decodeCount int) float64 {
 	}
 }
 
-func (d *decoder) unmarshal(n *node, out reflect.Value) (good bool) {
+func (d *decoder) unmarshal(n *Node, out reflect.Value) (good bool) {
 	d.decodeCount++
 	if d.aliasDepth > 0 {
 		d.aliasCount++
@@ -378,7 +394,7 @@ func (d *decoder) unmarshal(n *node, out reflect.Value) (good bool) {
 	return good
 }
 
-func (d *decoder) document(n *node, out reflect.Value) (good bool) {
+func (d *decoder) document(n *Node, out reflect.Value) (good bool) {
 	if len(n.children) == 1 {
 		d.doc = n
 		d.unmarshal(n.children[0], out)
@@ -387,7 +403,7 @@ func (d *decoder) document(n *node, out reflect.Value) (good bool) {
 	return false
 }
 
-func (d *decoder) alias(n *node, out reflect.Value) (good bool) {
+func (d *decoder) alias(n *Node, out reflect.Value) (good bool) {
 	if d.aliases[n] {
 		// TODO this could actually be allowed in some circumstances.
 		failf("anchor '%s' value contains itself", n.value)
@@ -408,7 +424,7 @@ func resetMap(out reflect.Value) {
 	}
 }
 
-func (d *decoder) scalar(n *node, out reflect.Value) bool {
+func (d *decoder) scalar(n *Node, out reflect.Value) bool {
 	var tag string
 	var resolved interface{}
 	if n.tag == "" && !n.implicit {
@@ -582,7 +598,7 @@ func settableValueOf(i interface{}) reflect.Value {
 	return sv
 }
 
-func (d *decoder) sequence(n *node, out reflect.Value) (good bool) {
+func (d *decoder) sequence(n *Node, out reflect.Value) (good bool) {
 	l := len(n.children)
 
 	var iface reflect.Value
@@ -620,7 +636,7 @@ func (d *decoder) sequence(n *node, out reflect.Value) (good bool) {
 	return true
 }
 
-func (d *decoder) mapping(n *node, out reflect.Value) (good bool) {
+func (d *decoder) mapping(n *Node, out reflect.Value) (good bool) {
 	switch out.Kind() {
 	case reflect.Struct:
 		return d.mappingStruct(n, out)
@@ -682,7 +698,7 @@ func (d *decoder) mapping(n *node, out reflect.Value) (good bool) {
 	return true
 }
 
-func (d *decoder) setMapIndex(n *node, out, k, v reflect.Value) {
+func (d *decoder) setMapIndex(n *Node, out, k, v reflect.Value) {
 	if d.strict && out.MapIndex(k) != zeroValue {
 		d.terrors = append(d.terrors, fmt.Sprintf("line %d: key %#v already set in map", n.line+1, k.Interface()))
 		return
@@ -690,7 +706,7 @@ func (d *decoder) setMapIndex(n *node, out, k, v reflect.Value) {
 	out.SetMapIndex(k, v)
 }
 
-func (d *decoder) mappingSlice(n *node, out reflect.Value) (good bool) {
+func (d *decoder) mappingSlice(n *Node, out reflect.Value) (good bool) {
 	outt := out.Type()
 	if outt.Elem() != mapItemType {
 		d.terror(n, yaml_MAP_TAG, out)
@@ -721,7 +737,7 @@ func (d *decoder) mappingSlice(n *node, out reflect.Value) (good bool) {
 	return true
 }
 
-func (d *decoder) mappingStruct(n *node, out reflect.Value) (good bool) {
+func (d *decoder) mappingStruct(n *Node, out reflect.Value) (good bool) {
 	sinfo, err := getStructInfo(out.Type())
 	if err != nil {
 		panic(err)
@@ -783,7 +799,7 @@ func failWantMap() {
 	failf("map merge requires map or sequence of maps as the value")
 }
 
-func (d *decoder) merge(n *node, out reflect.Value) {
+func (d *decoder) merge(n *Node, out reflect.Value) {
 	switch n.kind {
 	case mappingNode:
 		d.unmarshal(n, out)
@@ -810,6 +826,6 @@ func (d *decoder) merge(n *node, out reflect.Value) {
 	}
 }
 
-func isMerge(n *node) bool {
+func isMerge(n *Node) bool {
 	return n.kind == scalarNode && n.value == "<<" && (n.implicit == true || n.tag == yaml_MERGE_TAG)
 }
